@@ -1,0 +1,137 @@
+---
+title: "HW8_answer"
+author: "Guojing Wu"
+date: "4/22/2019"
+output:
+    pdf_document:
+    highlight: default
+    number_sections: true
+    citation_package:
+    keep_tex: false
+    fig_caption: true
+    latex_engine: pdflatex
+fontsize: 10pt
+geometry: margin=1in
+bibliography:
+biblio-style:
+header-includes:
+- \usepackage{indentfirst}
+- \usepackage{graphicx}
+- \usepackage{geometry}
+- \usepackage{subfigure}
+- \usepackage{amsmath}
+- \usepackage{listings}
+- \usepackage{tikz}
+- \usetikzlibrary{matrix}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      message = F, 
+                      warning = F, 
+                      comment = "")
+library(tidyverse)
+library(gee)
+library(lme4)
+library(nlme)
+theme_set(theme_bw())
+```
+
+## Problem
+
+### a) Cross-sectional relationship
+
+```{r}
+# original data
+data.health <- readxl::read_xlsx("HW8-HEALTH.xlsx") %>% 
+  mutate(TXT = as.factor(TXT), 
+         HEALTH = as.numeric(HEALTH == "Good"), 
+         TIME = as.integer(TIME))
+# remove subjects with only one obs
+data.hea1 <- data.health %>% 
+  filter(!ID %in% names(which(table(data.health$ID) == 1))) # remove the subject only has baseline
+# transform baseline value to another column
+data.hea2 <- data.hea1 %>% filter(TIME != 1)
+data.hea2$baseline = rep(subset(data.hea1, TIME == "1")$HEALTH, as.numeric(table(data.hea2$ID))) # create baseline covariate
+
+# GLM to test cross-sectional relationship
+hea_glm1 = glm(HEALTH ~ TIME + TXT * baseline + AGEGROUP, data = data.hea2)
+hea_glm2 = glm(HEALTH ~ TIME + TXT + baseline + AGEGROUP, data = data.hea2)
+ano = anova(hea_glm2, hea_glm1)
+pvalue = 1 - pchisq(ano$Deviance[2], df = ano$Df[2])
+
+```
+
+We first delete some subjects that only have one observation: `r names(which(table(data.health$ID) == 1))`. Then transform the baseline health self-rating to another column:
+
+```{r}
+head(data.hea2) %>% knitr::kable()
+```
+
+
+We use GLM to build two models:
+
+$$
+\begin{split}
+model1 &: HEALTH \sim TIME + TXT * baseline + AGEGROUP \\
+model2 &: HEALTH \sim TIME + TXT + baseline + AGEGROUP
+\end{split}
+$$
+
+And used ANOVA to do deviance analysis to test whether the interaction term is significant or not. We got the pvalue = 
+`r round(pvalue, 4)`, which state that we failed to reject the null hypothesis and the smaller model is better (in this case, model2).
+
+### b) GEE with unstructured correlation
+
+```{r, results = 'hide'}
+# GEE with unstructured correlation
+hea_gee1 = gee(HEALTH ~ TIME + TXT + baseline + AGEGROUP, data = data.hea2, family = "binomial", id = ID, corstr = "unstructured", scale.fix = TRUE, scale.value = 1)
+```
+
+Based on the question, the model here is $HEALTH \sim TIME + TXT + baseline + AGEGROUP$. We used GEE with unstructured correlation and get the parameters estimations:
+
+```{r}
+hea_gee1$coefficients %>% knitr::kable()
+```
+
+Interpretation:
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(as.numeric(hea_gee1$coefficients[2]), 3)`, for per 3 months change in time, if take average among all measurements and all subjects within the same subgroup (which is defined as share the same treatment, baseline and age group).
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(as.numeric(hea_gee1$coefficients[3]), 3)`, between treatment and control, if take average among all measurements and all subjects within the same subgroup (which is defined as share the same time, baseline and age group).
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(as.numeric(hea_gee1$coefficients[4]), 3)`, between being "Good" or "Poor" at the baseline, if take average among all measurements and all subjects within the same subgroup (which is defined as share the same time, treatment and age group).
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(as.numeric(hea_gee1$coefficients[5]), 3)`, between "age group 25-34" and "age group 15-24", if take average among all measurements and all subjects within the same subgroup (which is defined as share the same time, treatment and baseline).
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(as.numeric(hea_gee1$coefficients[6]), 3)`, between "age group 35+" and "age group 15-24", if take average among all measurements and all subjects within the same subgroup (which is defined as share the same time, treatment and baseline).
+
+And the unstructured correlation matrix looks like below, the correlation between different times within the same subject varies.
+
+```{r}
+hea_gee1$working.correlation %>% knitr::kable()
+```
+
+### c) GLMM with subject-specific random intercepts
+
+Based on the question, the model here is $logitE(Y_{ij}|b_{i}) = (\beta_{1} + b_{1i}) + \beta_{2}TIME_{ij} + \beta_{3}TXT_{i} + \beta_{4}baseline_{i} + \beta_{5}AGEGROUP_{i}$.
+
+```{r}
+# GLMM with subject-specific random intercepts
+hea_glmer = glmer(HEALTH ~ TIME + TXT + baseline + AGEGROUP + (1 | ID), data = data.hea2, family = "binomial")
+fixed.effects(hea_glmer) %>% knitr::kable()
+```
+
+Interpretation:
+
+* the log odds ratio of being "Good" against "Poor" at self-rating is `r round(fixed.effects(hea_glmer)[2], 3)`, for 3 months change in time for the same subject.
+
+The interpretation difference between GEE and GLMM is that:
+
+* GEE interpret the parameters as population average
+
+* GLMM interpret the parameters as subject-specific
+
+## Code
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
